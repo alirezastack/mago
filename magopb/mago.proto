@@ -9,9 +9,11 @@ message CreateUserRequest {
   repeated string roles = 3;
   string phone = 4;
   bool is_verified = 5;
+
+  // For enums, the default value is the first defined enum value, which must be 0.
   enum Status {
-    ACTIVE = 0;
-    INACTIVE = 1;
+    INACTIVE = 0;
+    ACTIVE = 1;
     BANNED = 2;
   }
   Status status = 6;
