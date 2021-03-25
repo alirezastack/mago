@@ -12,15 +12,40 @@ import (
 	"google.golang.org/grpc/status"
 	"log"
 	"net"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 )
 
 var port = flag.Int("port", 50051, "gRPC Listening Port")
 
-type server struct {
+type RpcServer struct {
 	mago.UnimplementedMagoServiceServer
+	address    string
+	grpcServer *grpc.Server
 }
 
-func (s *server) CreateUser(ctx context.Context, in *mago.CreateUserRequest) (*mago.CreateUserResponse, error) {
+func NewServer(addr string) *RpcServer {
+	// initialize encryption
+	certFile := "helpers/ssl/server.crt"
+	keyFile := "helpers/ssl/server.pem"
+	creds, certErr := credentials.NewServerTLSFromFile(certFile, keyFile)
+	if certErr != nil {
+		log.Fatalf("Failed loading certificates: %v", certErr)
+	}
+
+	opts := grpc.Creds(creds)
+	s := grpc.NewServer(opts)
+
+	rs := &RpcServer{
+		address:    addr,
+		grpcServer: s,
+	}
+	return rs
+}
+
+func (s *RpcServer) CreateUser(ctx context.Context, in *mago.CreateUserRequest) (*mago.CreateUserResponse, error) {
 	log.Printf("Received user phone: %v", in.GetPhone())
 	// We just check client cancellation before expensive calls
 	//if ctx.Err() == context.Canceled {
@@ -42,29 +67,46 @@ func (s *server) CreateUser(ctx context.Context, in *mago.CreateUserRequest) (*m
 	return &mago.CreateUserResponse{UserId: "FAKE-ID"}, nil
 }
 
+func (s *RpcServer) Run() {
+	listener, err := net.Listen("tcp", s.address)
+	if err != nil {
+		log.Fatalf("Failed to listen: %v", err)
+		return
+	}
+	log.Printf("rpc listening on:%v rpc_server", s.address)
+
+	mago.RegisterMagoServiceServer(s.grpcServer, s)
+	if err := s.grpcServer.Serve(listener); err != nil {
+		log.Fatalf("Failed to server on listener: %v", err)
+	}
+}
+
+// It stops the server from accepting new connections and RPCs and
+// blocks until all the pending RPCs are finished.
+func (s *RpcServer) Stop() {
+	log.Printf("Kill signal received, stopping Mago server...")
+	s.grpcServer.GracefulStop()
+	log.Printf("Mago server is stopped!")
+}
+
+// go run main.go --port 8085
 func main() {
 	flag.Parse()
 	fmt.Printf("Starting up Mago server on 0.0.0.0:%v...\n", *port)
 
-	lis, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", *port))
-	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
-	}
+	server := NewServer(fmt.Sprintf("0.0.0.0:%d", *port))
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		server.Run()
+		wg.Done()
+	}()
 
-	// initialize encryption
-	certFile := "helpers/ssl/server.crt"
-	keyFile := "helpers/ssl/server.pem"
-	creds, certErr := credentials.NewServerTLSFromFile(certFile, keyFile)
-	if certErr != nil {
-		log.Fatalf("Failed loading certificates: %v", certErr)
-	}
+	// Signal handling and graceful shutdown of gRPC server
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
+	<-signalChan
+	server.Stop()
 
-	opts := grpc.Creds(creds)
-	s := grpc.NewServer(opts)
-	mago.RegisterMagoServiceServer(s, &server{})
-
-	fmt.Println("Mago server is up & running ;)")
-	if err := s.Serve(lis); err != nil {
-		log.Fatalf("Failed to server on listener: %v", err)
-	}
+	wg.Wait()
 }
