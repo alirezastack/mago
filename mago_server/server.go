@@ -46,10 +46,10 @@ func NewServer(addr string) *RpcServer {
 }
 
 func (s *RpcServer) CreateUser(ctx context.Context, in *mago.CreateUserRequest) (*mago.CreateUserResponse, error) {
-	log.Printf("Received user phone: %v", in.GetPhone())
+	log.Printf("Received user phone: %v\n", in.GetPhone())
 	// We just check client cancellation before expensive calls
 	//if ctx.Err() == context.Canceled {
-	//	fmt.Println("The client canceled the request!")
+	//	log.Println("The client canceled the request!")
 	//	return nil, status.Error(codes.Canceled, "The client canceled the request!")
 	//}
 
@@ -69,11 +69,12 @@ func (s *RpcServer) CreateUser(ctx context.Context, in *mago.CreateUserRequest) 
 
 func (s *RpcServer) Run() {
 	listener, err := net.Listen("tcp", s.address)
+	defer listener.Close()
+
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
-		return
 	}
-	log.Printf("rpc listening on:%v rpc_server", s.address)
+	log.Printf("rpc listening on: %v rpc_server\n", s.address)
 
 	mago.RegisterMagoServiceServer(s.grpcServer, s)
 	if err := s.grpcServer.Serve(listener); err != nil {
@@ -84,15 +85,18 @@ func (s *RpcServer) Run() {
 // It stops the server from accepting new connections and RPCs and
 // blocks until all the pending RPCs are finished.
 func (s *RpcServer) Stop() {
-	log.Printf("Kill signal received, stopping Mago server...")
+	log.Printf("Kill signal received, stopping Mago server...\n")
 	s.grpcServer.GracefulStop()
-	log.Printf("Mago server is stopped!")
+	log.Printf("Mago server is stopped!\n")
 }
 
 // go run main.go --port 8085
 func main() {
+	// on go code crash, we receive file name and line number
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
 	flag.Parse()
-	fmt.Printf("Starting up Mago server on 0.0.0.0:%v...\n", *port)
+	log.Printf("Starting up Mago server on 0.0.0.0:%v...\n", *port)
 
 	server := NewServer(fmt.Sprintf("0.0.0.0:%d", *port))
 	wg := sync.WaitGroup{}
